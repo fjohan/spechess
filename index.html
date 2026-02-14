@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SpecChess</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="header">
+        <h1>SpecChess</h1>
+        <p>Enter moves in SAN (e.g., e4, Nf3, O-O, exd5, e8=Q).</p>
+      </header>
+
+      <section class="board-wrap" aria-label="Chess board section">
+        <div id="board" class="board" role="img" aria-label="Chess board"></div>
+      </section>
+
+      <section class="controls" aria-label="Game controls">
+        <div class="status-row">
+          <div id="turnBadge" class="badge">White to move</div>
+          <div id="stateBadge" class="badge subtle">Ready</div>
+        </div>
+
+        <form id="moveForm" class="move-form" autocomplete="off">
+          <label for="moveInput">Move (SAN)</label>
+          <div class="input-row">
+            <input
+              id="moveInput"
+              name="move"
+              type="text"
+              inputmode="text"
+              placeholder="e4"
+              spellcheck="false"
+              aria-describedby="hint"
+              required
+            />
+            <button type="submit">Play Move</button>
+          </div>
+          <p id="hint" class="hint">Only legal moves are accepted.</p>
+        </form>
+
+        <div class="action-row">
+          <button id="randomBtn" type="button">Random Legal Move</button>
+          <button id="resetBtn" type="button" class="ghost">Reset</button>
+        </div>
+
+        <div id="message" class="message" aria-live="polite"></div>
+
+        <section class="moves" aria-label="Move list">
+          <h2>Moves</h2>
+          <ol id="moveList"></ol>
+        </section>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>
