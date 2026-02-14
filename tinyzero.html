@@ -1,0 +1,230 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Browser Self-Play Chess RL (Toy)</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 24px auto; }
+    button { padding: 10px 14px; margin-right: 8px; }
+    pre { background: #f6f6f6; padding: 12px; border-radius: 8px; overflow:auto; }
+  </style>
+</head>
+<body>
+  <h2>Toy Self-Play Chess RL (Policy Gradient)</h2>
+  <p>This is a simplified self-learning chess agent. It will be weak, but it learns patterns over time.</p>
+  <button id="trainBtn">Train 50 games</button>
+  <button id="playBtn">Play 1 game (show moves)</button>
+  <pre id="log"></pre>
+
+  <!-- Chess.js (legal moves + rules) -->
+  <script src="https://cdn.jsdelivr.net/npm/chess.js@1.0.0/dist/chess.min.js"></script>
+  <!-- TensorFlow.js -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
+
+  <script>
+    const logEl = document.getElementById("log");
+    const log = (s) => { logEl.textContent += s + "\n"; logEl.scrollTop = logEl.scrollHeight; };
+
+    // --- 1) Board encoding ---
+    // 12 planes (P,N,B,R,Q,K for white then black) over 64 squares -> length 768 vector
+    const PIECE_TO_PLANE = {
+      p: 6, n: 7, b: 8, r: 9, q: 10, k: 11,  // black
+      P: 0, N: 1, B: 2, R: 3, Q: 4, K: 5   // white
+    };
+
+    function boardToTensor(chess) {
+      const board = chess.board(); // 8x8, each cell null or {type,color}
+      const x = new Float32Array(12 * 64);
+      let idx = 0;
+      for (let r = 0; r < 8; r++) {
+        for (let c = 0; c < 8; c++) {
+          const piece = board[r][c];
+          if (piece) {
+            const symbol = piece.color === "w" ? piece.type.toUpperCase() : piece.type;
+            const plane = PIECE_TO_PLANE[symbol];
+            x[plane * 64 + idx] = 1.0;
+          }
+          idx++;
+        }
+      }
+      return tf.tensor2d(x, [1, 12 * 64]);
+    }
+
+    // --- 2) Move "vocabulary" ---
+    // For a toy project, we’ll map each legal move to an index in a fixed-size list
+    // of *possible UCI-like strings*.
+    //
+    // AlphaZero uses a structured action encoding (from-square x to-square x promotion).
+    // We'll do that too, but keep it simple: enumerate all from-to squares + promotions.
+    const files = "abcdefgh";
+    function sq(i) { return files[i % 8] + (8 - Math.floor(i / 8)); }
+
+    // All from-to pairs + promotions (q,r,b,n)
+    const ACTIONS = [];
+    const actionIndex = new Map();
+    for (let from = 0; from < 64; from++) {
+      for (let to = 0; to < 64; to++) {
+        const base = sq(from) + sq(to);
+        ACTIONS.push(base);
+        ACTIONS.push(base + "q");
+        ACTIONS.push(base + "r");
+        ACTIONS.push(base + "b");
+        ACTIONS.push(base + "n");
+      }
+    }
+    ACTIONS.forEach((a, i) => actionIndex.set(a, i));
+    const ACTION_SIZE = ACTIONS.length; // 64*64*5 = 20480
+
+    function moveToAction(move) {
+      // chess.js verbose move has from, to, promotion?
+      let a = move.from + move.to;
+      if (move.promotion) a += move.promotion; // q r b n
+      return a;
+    }
+
+    // --- 3) Policy Network ---
+    // Input: 768
+    // Output: logits over ACTION_SIZE (20k) - big but still ok for a toy (slow-ish)
+    // You can shrink this later by using a smaller action encoding.
+    const model = tf.sequential();
+    model.add(tf.layers.dense({ units: 256, activation: "relu", inputShape: [12 * 64] }));
+    model.add(tf.layers.dense({ units: 256, activation: "relu" }));
+    model.add(tf.layers.dense({ units: ACTION_SIZE })); // logits
+    const optimizer = tf.train.adam(1e-3);
+
+    // --- 4) Sample a move from the policy, masked to legal moves ---
+    async function selectMove(chess, temperature = 1.0) {
+      const legal = chess.moves({ verbose: true });
+      if (legal.length === 0) return null;
+
+      return tf.tidy(() => {
+        const x = boardToTensor(chess);
+        const logits = model.predict(x); // [1, ACTION_SIZE]
+        const logits1d = logits.squeeze(); // [ACTION_SIZE]
+
+        // Build mask for legal moves
+        const mask = new Float32Array(ACTION_SIZE);
+        const legalIdx = [];
+        for (const m of legal) {
+          const a = moveToAction(m);
+          const i = actionIndex.get(a);
+          if (i !== undefined) {
+            mask[i] = 1.0;
+            legalIdx.push(i);
+          }
+        }
+
+        // If something went wrong (shouldn't), fallback random legal.
+        if (legalIdx.length === 0) {
+          const m = legal[Math.floor(Math.random() * legal.length)];
+          return { move: m, actionIdx: null, logProb: null };
+        }
+
+        // Mask logits: set illegal to very negative
+        const maskT = tf.tensor1d(mask);
+        const negInf = tf.scalar(-1e9);
+        const masked = logits1d.mul(maskT).add(negInf.mul(tf.onesLike(maskT).sub(maskT)));
+
+        // Temperature sampling
+        const scaled = masked.div(tf.scalar(Math.max(temperature, 1e-6)));
+        const probs = tf.softmax(scaled);
+
+        // Sample an action index
+        const sample = tf.multinomial(tf.log(probs), 1).dataSync()[0];
+
+        // Find corresponding verbose move in legal list
+        const chosenAction = ACTIONS[sample];
+        let chosenMove = null;
+        for (const m of legal) {
+          if (moveToAction(m) === chosenAction) { chosenMove = m; break; }
+        }
+        if (!chosenMove) {
+          // Rare: sample may hit a legal index but not match due to formatting; fallback
+          chosenMove = legal[Math.floor(Math.random() * legal.length)];
+        }
+
+        // log π(a|s)
+        const logProb = tf.log(probs.gather(sample));
+        return { move: chosenMove, actionIdx: sample, logProb };
+      });
+    }
+
+    // --- 5) Self-play one game, record (logProb, player) for each move ---
+    async function selfPlayGame(maxPlies = 200, temperature = 1.0) {
+      const chess = new Chess();
+      const trajectory = []; // {logProbTensor, playerColor}
+      let plies = 0;
+
+      while (!chess.isGameOver() && plies < maxPlies) {
+        const player = chess.turn(); // 'w' or 'b'
+        const sel = await selectMove(chess, temperature);
+        if (!sel || !sel.move) break;
+
+        // Record the logProb for training (only if we have it)
+        if (sel.logProb) trajectory.push({ logProb: sel.logProb, player });
+
+        chess.move(sel.move);
+        plies++;
+      }
+
+      // Outcome reward from White's perspective
+      let result = 0;
+      if (chess.isCheckmate()) {
+        // side to move is checkmated, so the other side won
+        const loser = chess.turn();
+        result = (loser === "w") ? -1 : +1;
+      } else {
+        // draw (stalemate / repetition / 50-move / insufficient / etc)
+        result = 0;
+      }
+
+      return { trajectory, result, pgn: chess.pgn(), reason: chess.isCheckmate() ? "checkmate" : "draw/other" };
+    }
+
+    // --- 6) Train on a batch of self-play games using REINFORCE ---
+    async function train(games = 50) {
+      let w = 0, l = 0, d = 0;
+
+      for (let g = 0; g < games; g++) {
+        const { trajectory, result } = await selfPlayGame(200, 1.0);
+
+        if (result === 1) w++; else if (result === -1) l++; else d++;
+
+        // Policy gradient:
+        // For each move by White, reward = result
+        // For each move by Black, reward = -result (since zero-sum)
+        optimizer.minimize(() => {
+          return tf.tidy(() => {
+            let loss = tf.scalar(0);
+            for (const step of trajectory) {
+              const r = (step.player === "w") ? result : -result;
+              // We want to maximize logProb * r  => minimize -logProb * r
+              loss = loss.add(step.logProb.mul(tf.scalar(-r)));
+            }
+            // Normalize a bit so longer games don't dominate as much
+            const denom = tf.scalar(Math.max(trajectory.length, 1));
+            return loss.div(denom);
+          });
+        }, true);
+
+        // Let the browser breathe
+        if (g % 10 === 0) await tf.nextFrame();
+      }
+
+      log(`Trained ${games} games. W/L/D (from White POV): ${w}/${l}/${d}`);
+    }
+
+    async function playAndShow() {
+      const { pgn, result, reason } = await selfPlayGame(200, 0.8);
+      log(`Game result (White POV): ${result} (${reason})`);
+      log(pgn);
+      log("----");
+    }
+
+    document.getElementById("trainBtn").onclick = () => train(50);
+    document.getElementById("playBtn").onclick = () => playAndShow();
+
+    log("Ready. Train a bit, then play a game to see PGN.");
+  </script>
+</body>
+</html>

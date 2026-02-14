@@ -178,10 +178,11 @@ button.ghost {
   display: flex;
   gap: 8px;
   margin-top: 10px;
+  flex-wrap: wrap;
 }
 
 .action-row button {
-  flex: 1;
+  flex: 1 1 140px;
 }
 
 .message {

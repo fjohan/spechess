@@ -21,9 +21,16 @@ const moveInput = document.getElementById("moveInput");
 const moveList = document.getElementById("moveList");
 const turnBadge = document.getElementById("turnBadge");
 const stateBadge = document.getElementById("stateBadge");
+const timerBadge = document.getElementById("timerBadge");
 const messageEl = document.getElementById("message");
 const randomBtn = document.getElementById("randomBtn");
+const autoplayBtn = document.getElementById("autoplayBtn");
 const resetBtn = document.getElementById("resetBtn");
+const submitBtn = moveForm.querySelector('button[type="submit"]');
+
+let isAutoplaying = false;
+let autoplayStartMs = null;
+let lastAutoplayDurationMs = null;
 
 let game = createInitialState();
 
@@ -541,6 +548,43 @@ function matchMoveFromInput(input, legalEntries) {
   return null;
 }
 
+function squareColor(index) {
+  return (fileOf(index) + rankOf(index)) % 2;
+}
+
+function hasInsufficientMatingMaterial(state) {
+  const nonKings = [];
+  let hasHeavyOrPawn = false;
+
+  for (let i = 0; i < 64; i += 1) {
+    const piece = state.board[i];
+    if (!piece) continue;
+    const type = piece.toUpperCase();
+    if (type === "K") continue;
+    if (type === "P" || type === "Q" || type === "R") {
+      hasHeavyOrPawn = true;
+      break;
+    }
+    nonKings.push({ type, index: i });
+  }
+
+  if (hasHeavyOrPawn) return false;
+  if (nonKings.length === 0) return true; // K vs K
+  if (nonKings.length === 1) return true; // K+B vs K or K+N vs K
+
+  // K+B vs K+B with bishops on same color is dead.
+  if (
+    nonKings.length === 2 &&
+    nonKings[0].type === "B" &&
+    nonKings[1].type === "B" &&
+    squareColor(nonKings[0].index) === squareColor(nonKings[1].index)
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 function evaluateGameState(state) {
   const legal = generateLegalMoves(state);
   const check = inCheck(state, state.sideToMove);
@@ -552,6 +596,16 @@ function evaluateGameState(state) {
     }
     state.result = "Draw by stalemate";
     return { terminal: true, text: "Stalemate" };
+  }
+
+  if (hasInsufficientMatingMaterial(state)) {
+    state.result = "Draw by insufficient mating material";
+    return { terminal: true, text: "Draw" };
+  }
+
+  if (state.halfmoveClock >= 100) {
+    state.result = "Draw by 50-move rule";
+    return { terminal: true, text: "Draw" };
   }
 
   if (check) return { terminal: false, text: "Check" };
@@ -598,6 +652,26 @@ function setMessage(text, type = "info") {
   messageEl.className = `message ${type}`;
 }
 
+function formatDuration(ms) {
+  const totalMs = Math.max(0, Math.floor(ms));
+  const minutes = Math.floor(totalMs / 60000);
+  const seconds = Math.floor((totalMs % 60000) / 1000);
+  const millis = totalMs % 1000;
+  return `${minutes}:${String(seconds).padStart(2, "0")}.${String(millis).padStart(3, "0")}`;
+}
+
+function updateTimerBadge() {
+  if (isAutoplaying && autoplayStartMs !== null) {
+    timerBadge.textContent = `Auto timer: ${formatDuration(performance.now() - autoplayStartMs)}`;
+    return;
+  }
+  if (lastAutoplayDurationMs !== null) {
+    timerBadge.textContent = `Last auto: ${formatDuration(lastAutoplayDurationMs)}`;
+    return;
+  }
+  timerBadge.textContent = "Auto timer: --";
+}
+
 function refreshUI() {
   renderBoard(game);
   renderMoveList(game);
@@ -605,6 +679,7 @@ function refreshUI() {
   turnBadge.textContent = game.sideToMove === "w" ? "White to move" : "Black to move";
   const status = evaluateGameState(game);
   stateBadge.textContent = status.text;
+  updateTimerBadge();
 
   if (game.result) {
     setMessage(game.result, "warn");
@@ -612,7 +687,11 @@ function refreshUI() {
     setMessage("", "info");
   }
 
-  randomBtn.disabled = !!game.result;
+  const locked = !!game.result || isAutoplaying;
+  randomBtn.disabled = locked;
+  autoplayBtn.disabled = locked;
+  moveInput.disabled = locked;
+  submitBtn.disabled = locked;
 }
 
 function playMoveInput(inputSan) {
@@ -638,6 +717,7 @@ function playMoveInput(inputSan) {
 
 moveForm.addEventListener("submit", (event) => {
   event.preventDefault();
+  if (isAutoplaying) return;
   const value = moveInput.value;
   if (!value.trim()) return;
   playMoveInput(value);
@@ -646,7 +726,7 @@ moveForm.addEventListener("submit", (event) => {
 });
 
 randomBtn.addEventListener("click", () => {
-  if (game.result) return;
+  if (game.result || isAutoplaying) return;
   const legalMoves = generateLegalMoves(game);
   if (legalMoves.length === 0) {
     refreshUI();
@@ -663,7 +743,51 @@ randomBtn.addEventListener("click", () => {
   }
 });
 
+async function autoplayFullGame() {
+  if (game.result || isAutoplaying) return;
+
+  isAutoplaying = true;
+  autoplayStartMs = performance.now();
+  lastAutoplayDurationMs = null;
+  setMessage("Autoplay in progress...", "info");
+  refreshUI();
+
+  while (!game.result) {
+    const legalMoves = generateLegalMoves(game);
+    if (legalMoves.length === 0) {
+      refreshUI();
+      break;
+    }
+
+    const move = legalMoves[Math.floor(Math.random() * legalMoves.length)];
+    const san = sanForMove(game, move, legalMoves);
+    game = applyMove(game, move);
+    game.history.push(san);
+    refreshUI();
+
+    await new Promise((resolve) => {
+      setTimeout(resolve, 16);
+    });
+  }
+
+  lastAutoplayDurationMs = performance.now() - autoplayStartMs;
+  isAutoplaying = false;
+  autoplayStartMs = null;
+  refreshUI();
+
+  if (game.result) {
+    setMessage(`${game.result}. Autoplay finished in ${formatDuration(lastAutoplayDurationMs)}.`, "warn");
+  }
+}
+
+autoplayBtn.addEventListener("click", () => {
+  autoplayFullGame();
+});
+
 resetBtn.addEventListener("click", () => {
+  isAutoplaying = false;
+  autoplayStartMs = null;
+  lastAutoplayDurationMs = null;
   game = createInitialState();
   refreshUI();
   setMessage("Game reset.", "info");
