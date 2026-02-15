@@ -22,6 +22,7 @@
           <div id="turnBadge" class="badge">White to move</div>
           <div id="stateBadge" class="badge subtle">Ready</div>
           <div id="timerBadge" class="badge subtle">Auto timer: --</div>
+          <div id="policyBadge" class="badge subtle">Policy: untrained</div>
         </div>
 
         <form id="moveForm" class="move-form" autocomplete="off">
@@ -45,7 +46,44 @@
         <div class="action-row">
           <button id="randomBtn" type="button">Random Legal Move</button>
           <button id="autoplayBtn" type="button">Auto-Play Full Game</button>
+          <button id="trainBtn" type="button">Train Policy</button>
+          <button id="policyPlayBtn" type="button">Play Model Match</button>
           <button id="resetBtn" type="button" class="ghost">Reset</button>
+        </div>
+        <div class="train-config">
+          <label for="trainModelSelect">Train model</label>
+          <select id="trainModelSelect"></select>
+          <input id="newModelNameInput" type="text" maxlength="40" placeholder="new-model-name" />
+          <button id="newModelBtn" type="button">New Model</button>
+          <button id="deleteModelBtn" type="button" class="ghost">Delete Model</button>
+        </div>
+        <div class="train-config">
+          <label for="trainGamesInput">Train games</label>
+          <input id="trainGamesInput" type="number" min="1" step="1" value="1000" />
+        </div>
+        <div class="train-config">
+          <label for="trainWhiteModelSelect">Train white</label>
+          <select id="trainWhiteModelSelect">
+            <option value="random">Random</option>
+          </select>
+          <label for="trainBlackModelSelect">Train black</label>
+          <select id="trainBlackModelSelect">
+            <option value="random">Random</option>
+          </select>
+        </div>
+        <div class="train-config">
+          <label for="whiteModelSelect">Match white</label>
+          <select id="whiteModelSelect">
+            <option value="random">Random</option>
+          </select>
+          <label for="blackModelSelect">Match black</label>
+          <select id="blackModelSelect">
+            <option value="random" selected>Random</option>
+          </select>
+        </div>
+        <div class="train-config">
+          <label for="matchGamesInput">Match games</label>
+          <input id="matchGamesInput" type="number" min="1" step="1" value="50" />
         </div>
 
         <div id="message" class="message" aria-live="polite"></div>
@@ -53,6 +91,11 @@
         <section class="moves" aria-label="Move list">
           <h2>Moves</h2>
           <ol id="moveList"></ol>
+        </section>
+
+        <section class="moves" aria-label="Training log">
+          <h2>Training Log</h2>
+          <pre id="trainLog" class="train-log">No training run yet.</pre>
         </section>
       </section>
     </main>
